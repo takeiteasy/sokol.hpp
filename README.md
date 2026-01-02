@@ -1,5 +1,7 @@
 # sokol.hpp
 
+C++ RAII wrapper for sokol resource types + builder wrappers for sokol desc types. These are hand-written but I plan to generate these at some point.
+
 ## LICENSE
 ```
 sokol.hpp Copyright (C) 2025 George Watson
