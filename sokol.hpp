@@ -18,16 +18,46 @@
 #pragma once
 #include <type_traits>
 #include <utility>
+#include <memory>
+
+#ifndef SOKOL_GFX_INCLUDED
+#if __has_include("sokol_gfx.h")
+#include "sokol_gfx.h"
+#elif __has_include("sokol/sokol_gfx.h")
 #include "sokol/sokol_gfx.h"
+#else
+#error Can't find sokol_gfx.h, please include sokol_gfx before including sokol.hpp
+#endif
+
+#ifndef SOKOL_APP_INCLUDED
+#if __has_include("sokol_app.h")
+#include "sokol_app.h"
+#elif __has_include("sokol/sokol_app.h")
 #include "sokol/sokol_app.h"
+#else
+#error Can't find sokol_app.h, please include sokol_app before including sokol.hpp
+#endif
+#endif
 
 namespace sg {
 namespace helper {
 template <typename T>
 struct deleter {
     void operator()(T* handle_ptr) const {
-        if (handle_ptr && handle_ptr->id != 0)
-            sg::destroy(*handle_ptr);
+        if (handle_ptr && handle_ptr->id != 0) {
+            if constexpr (std::is_same_v<T, sg_buffer>)
+                sg_destroy_buffer(*handle_ptr);
+            else if constexpr (std::is_same_v<T, sg_image>)
+                sg_destroy_image(*handle_ptr);
+            else if constexpr (std::is_same_v<T, sg_view>)
+                sg_destroy_view(*handle_ptr);
+            else if constexpr (std::is_same_v<T, sg_sampler>)
+                sg_destroy_sampler(*handle_ptr);
+            else if constexpr (std::is_same_v<T, sg_shader>)
+                sg_destroy_shader(*handle_ptr);
+            else if constexpr (std::is_same_v<T, sg_pipeline>)
+                sg_destroy_pipeline(*handle_ptr);
+        }
         delete handle_ptr;
     }
 };
@@ -66,7 +96,21 @@ public:
     }
 
     sg_resource_state state() const {
-        return handle_ptr ? sg::query_state(*handle_ptr) : SG_RESOURCESTATE_INVALID;
+        if (!handle_ptr)
+            return SG_RESOURCESTATE_INVALID;
+        if constexpr (std::is_same_v<T, sg_buffer>)
+            return sg_query_buffer_state(*handle_ptr);
+        else if constexpr (std::is_same_v<T, sg_image>)
+            return sg_query_image_state(*handle_ptr);
+        else if constexpr (std::is_same_v<T, sg_view>)
+            return sg_query_view_state(*handle_ptr);
+        else if constexpr (std::is_same_v<T, sg_sampler>)
+            return sg_query_sampler_state(*handle_ptr);
+        else if constexpr (std::is_same_v<T, sg_shader>)
+            return sg_query_shader_state(*handle_ptr);
+        else if constexpr (std::is_same_v<T, sg_pipeline>)
+            return sg_query_pipeline_state(*handle_ptr);
+        return SG_RESOURCESTATE_INVALID;
     }
 
     bool is_valid() const {
@@ -104,16 +148,15 @@ struct sg_type_traits;
 template<> \
 struct sg_type_traits<desc_type> { \
     using handle = handle_type; \
-    static constexpr auto make = sg_make_##prefix; \
-    static constexpr auto destroy = sg_destroy_##prefix; \
-    static constexpr auto query_desc = sg_query_##prefix##_desc; \
-    static constexpr auto query_defaults = sg_query_##prefix##_defaults; \
-    static constexpr auto query_info = sg_query_##prefix##_info; \
-    static constexpr auto query_state = sg_query_##prefix##_state; \
-    static constexpr auto dealloc = sg_dealloc_##prefix; \
-    static constexpr auto init = sg_init_##prefix; \
-    static constexpr auto uninit = sg_uninit_##prefix; \
-    static constexpr auto fail = sg_fail_##prefix; \
+    static inline handle make(const desc_type* desc) { return sg_make_##prefix(desc); } \
+    static inline void destroy(handle h) { sg_destroy_##prefix(h); } \
+    static inline desc_type query_desc(handle h) { return sg_query_##prefix##_desc(h); } \
+    static inline desc_type query_defaults(const desc_type* desc) { return sg_query_##prefix##_defaults(desc); } \
+    static inline sg_resource_state query_state(handle h) { return sg_query_##prefix##_state(h); } \
+    static inline void dealloc(handle h) { sg_dealloc_##prefix(h); } \
+    static inline void init(handle h, const desc_type* desc) { sg_init_##prefix(h, desc); } \
+    static inline void uninit(handle h) { sg_uninit_##prefix(h); } \
+    static inline void fail(handle h) { sg_fail_##prefix(h); } \
 };
 
 // Define traits for all types
@@ -237,138 +280,289 @@ public:
 };
 }
 
-// Wrapper for sg_buffer_desc
+// Builder API for sg_buffer_desc
 class buffer_desc : public helper::desc<sg_buffer_desc> {
 public:
     buffer_desc() = default;
-    
+
     buffer_desc& size(size_t s) { desc_.size = s; return *this; }
-    buffer_desc& type(sg_buffer_type t) { desc_.type = t; return *this; }
-    buffer_desc& usage(sg_usage u) { desc_.usage = u; return *this; }
+    buffer_desc& usage(const sg_buffer_usage& u) { desc_.usage = u; return *this; }
     buffer_desc& data(const sg_range& d) { desc_.data = d; return *this; }
     buffer_desc& label(const char* l) { desc_.label = l; return *this; }
-    
-    // Convenience constructors
-    static buffer_desc vertex(size_t size, sg_usage usage = SG_USAGE_IMMUTABLE) {
+
+    // Usage flag helpers
+    buffer_desc& vertex_buffer(bool v = true) { desc_.usage.vertex_buffer = v; return *this; }
+    buffer_desc& index_buffer(bool v = true) { desc_.usage.index_buffer = v; return *this; }
+    buffer_desc& storage_buffer(bool v = true) { desc_.usage.storage_buffer = v; return *this; }
+    buffer_desc& immutable(bool v = true) { desc_.usage.immutable = v; return *this; }
+    buffer_desc& dynamic_update(bool v = true) { desc_.usage.dynamic_update = v; return *this; }
+    buffer_desc& stream_update(bool v = true) { desc_.usage.stream_update = v; return *this; }
+
+    // Convenience factory methods
+    static buffer_desc make_vertex(size_t size, bool immutable = true) {
         return buffer_desc()
-            .type(SG_BUFFERTYPE_VERTEXBUFFER)
             .size(size)
-            .usage(usage);
+            .vertex_buffer()
+            .immutable(immutable);
     }
-    
-    static buffer_desc index(size_t size, sg_usage usage = SG_USAGE_IMMUTABLE) {
+
+    static buffer_desc make_index(size_t size, bool immutable = true) {
         return buffer_desc()
-            .type(SG_BUFFERTYPE_INDEXBUFFER)
             .size(size)
-            .usage(usage);
+            .index_buffer()
+            .immutable(immutable);
     }
-    
-    static buffer_desc vertex_with_data(const void* data, size_t size) {
+
+    static buffer_desc make_vertex_with_data(const void* data, size_t size) {
         return buffer_desc()
-            .type(SG_BUFFERTYPE_VERTEXBUFFER)
             .size(size)
-            .usage(SG_USAGE_IMMUTABLE)
+            .vertex_buffer()
+            .immutable()
+            .data(sg_range{data, size});
+    }
+
+    static buffer_desc make_index_with_data(const void* data, size_t size) {
+        return buffer_desc()
+            .size(size)
+            .index_buffer()
+            .immutable()
             .data(sg_range{data, size});
     }
 };
 
-// Wrapper for sg_image_desc
+// Builder API for sg_image_desc
 class image_desc : public helper::desc<sg_image_desc> {
 public:
     image_desc() = default;
-    
+
     image_desc& type(sg_image_type t) { desc_.type = t; return *this; }
-    image_desc& render_target(bool rt) { desc_.render_target = rt; return *this; }
+    image_desc& usage(const sg_image_usage& u) { desc_.usage = u; return *this; }
     image_desc& width(int w) { desc_.width = w; return *this; }
     image_desc& height(int h) { desc_.height = h; return *this; }
     image_desc& num_slices(int ns) { desc_.num_slices = ns; return *this; }
     image_desc& num_mipmaps(int nm) { desc_.num_mipmaps = nm; return *this; }
-    image_desc& usage(sg_usage u) { desc_.usage = u; return *this; }
     image_desc& pixel_format(sg_pixel_format pf) { desc_.pixel_format = pf; return *this; }
     image_desc& sample_count(int sc) { desc_.sample_count = sc; return *this; }
     image_desc& data(const sg_image_data& d) { desc_.data = d; return *this; }
     image_desc& label(const char* l) { desc_.label = l; return *this; }
-    
-    static image_desc texture_2d(int w, int h, sg_pixel_format fmt = SG_PIXELFORMAT_RGBA8) {
+
+    // Usage flag helpers
+    image_desc& storage_image(bool v = true) { desc_.usage.storage_image = v; return *this; }
+    image_desc& color_attachment(bool v = true) { desc_.usage.color_attachment = v; return *this; }
+    image_desc& resolve_attachment(bool v = true) { desc_.usage.resolve_attachment = v; return *this; }
+    image_desc& depth_stencil_attachment(bool v = true) { desc_.usage.depth_stencil_attachment = v; return *this; }
+    image_desc& immutable(bool v = true) { desc_.usage.immutable = v; return *this; }
+    image_desc& dynamic_update(bool v = true) { desc_.usage.dynamic_update = v; return *this; }
+    image_desc& stream_update(bool v = true) { desc_.usage.stream_update = v; return *this; }
+
+    // Convenience factory methods
+    static image_desc make_texture_2d(int w, int h, sg_pixel_format fmt = SG_PIXELFORMAT_RGBA8) {
         return image_desc()
             .type(SG_IMAGETYPE_2D)
             .width(w)
             .height(h)
             .pixel_format(fmt)
-            .usage(SG_USAGE_IMMUTABLE);
+            .immutable();
     }
-    
-    static image_desc render_target(int w, int h, sg_pixel_format fmt = SG_PIXELFORMAT_RGBA8) {
+
+    static image_desc make_render_target(int w, int h, sg_pixel_format fmt = SG_PIXELFORMAT_RGBA8, int samples = 1) {
         return image_desc()
             .type(SG_IMAGETYPE_2D)
-            .render_target(true)
             .width(w)
             .height(h)
             .pixel_format(fmt)
-            .sample_count(1);
+            .sample_count(samples)
+            .color_attachment();
+    }
+
+    static image_desc make_depth_stencil(int w, int h, sg_pixel_format fmt = SG_PIXELFORMAT_DEPTH_STENCIL, int samples = 1) {
+        return image_desc()
+            .type(SG_IMAGETYPE_2D)
+            .width(w)
+            .height(h)
+            .pixel_format(fmt)
+            .sample_count(samples)
+            .depth_stencil_attachment();
     }
 };
 
-// Wrapper for sg_shader_desc
+// Builder API for sg_shader_desc
 class shader_desc : public helper::desc<sg_shader_desc> {
 public:
     shader_desc() = default;
-    
-    shader_desc& vertex_shader(const char* source) {
-        desc_.vs.source = source;
+
+    shader_desc& vertex_source(const char* source) {
+        desc_.vertex_func.source = source;
         return *this;
     }
-    
-    shader_desc& fragment_shader(const char* source) {
-        desc_.fs.source = source;
+
+    shader_desc& vertex_bytecode(const sg_range& bc) {
+        desc_.vertex_func.bytecode = bc;
         return *this;
     }
-    
+
+    shader_desc& vertex_entry(const char* entry) {
+        desc_.vertex_func.entry = entry;
+        return *this;
+    }
+
+    shader_desc& fragment_source(const char* source) {
+        desc_.fragment_func.source = source;
+        return *this;
+    }
+
+    shader_desc& fragment_bytecode(const sg_range& bc) {
+        desc_.fragment_func.bytecode = bc;
+        return *this;
+    }
+
+    shader_desc& fragment_entry(const char* entry) {
+        desc_.fragment_func.entry = entry;
+        return *this;
+    }
+
+    shader_desc& compute_source(const char* source) {
+        desc_.compute_func.source = source;
+        return *this;
+    }
+
+    shader_desc& compute_bytecode(const sg_range& bc) {
+        desc_.compute_func.bytecode = bc;
+        return *this;
+    }
+
+    shader_desc& compute_entry(const char* entry) {
+        desc_.compute_func.entry = entry;
+        return *this;
+    }
+
     shader_desc& label(const char* l) {
         desc_.label = l;
         return *this;
     }
-    
-    // More methods for uniforms, attributes, etc.
-    shader_desc& vs_uniform_block(int index, size_t size) {
-        desc_.vs.uniform_blocks[index].size = size;
+
+    shader_desc& attr(int index, const char* glsl_name = nullptr, const char* hlsl_sem_name = nullptr, int hlsl_sem_index = 0) {
+        if (glsl_name) desc_.attrs[index].glsl_name = glsl_name;
+        if (hlsl_sem_name) desc_.attrs[index].hlsl_sem_name = hlsl_sem_name;
+        desc_.attrs[index].hlsl_sem_index = hlsl_sem_index;
         return *this;
     }
-    
-    shader_desc& fs_uniform_block(int index, size_t size) {
-        desc_.fs.uniform_blocks[index].size = size;
+
+    shader_desc& uniform_block(int index, size_t size) {
+        desc_.uniform_blocks[index].size = size;
         return *this;
     }
 };
 
-// Wrapper for sg_pipeline_desc
+// Builder API for sg_pipeline_desc
 class pipeline_desc : public helper::desc<sg_pipeline_desc> {
 public:
     pipeline_desc() = default;
-    
+
     pipeline_desc& shader(sg_shader shd) { desc_.shader = shd; return *this; }
     pipeline_desc& primitive_type(sg_primitive_type pt) { desc_.primitive_type = pt; return *this; }
     pipeline_desc& index_type(sg_index_type it) { desc_.index_type = it; return *this; }
     pipeline_desc& cull_mode(sg_cull_mode cm) { desc_.cull_mode = cm; return *this; }
+    pipeline_desc& face_winding(sg_face_winding fw) { desc_.face_winding = fw; return *this; }
+    pipeline_desc& sample_count(int sc) { desc_.sample_count = sc; return *this; }
+    pipeline_desc& blend_color(sg_color c) { desc_.blend_color = c; return *this; }
+    pipeline_desc& alpha_to_coverage(bool v) { desc_.alpha_to_coverage_enabled = v; return *this; }
+    pipeline_desc& label(const char* l) { desc_.label = l; return *this; }
+    pipeline_desc& compute(bool v = true) { desc_.compute = v; return *this; }
+    pipeline_desc& color_count(int count) { desc_.color_count = count; return *this; }
+
+    // Depth state helpers
     pipeline_desc& depth_write_enabled(bool enabled) { desc_.depth.write_enabled = enabled; return *this; }
     pipeline_desc& depth_compare(sg_compare_func cf) { desc_.depth.compare = cf; return *this; }
-    pipeline_desc& label(const char* l) { desc_.label = l; return *this; }
-    
+    pipeline_desc& depth_bias(float bias) { desc_.depth.bias = bias; return *this; }
+    pipeline_desc& depth_bias_slope_scale(float scale) { desc_.depth.bias_slope_scale = scale; return *this; }
+    pipeline_desc& depth_bias_clamp(float clamp) { desc_.depth.bias_clamp = clamp; return *this; }
+
+    // Stencil state helpers
+    pipeline_desc& stencil_enabled(bool v) { desc_.stencil.enabled = v; return *this; }
+    pipeline_desc& stencil_front_compare(sg_compare_func cf) { desc_.stencil.front.compare = cf; return *this; }
+    pipeline_desc& stencil_front_fail_op(sg_stencil_op op) { desc_.stencil.front.fail_op = op; return *this; }
+    pipeline_desc& stencil_front_depth_fail_op(sg_stencil_op op) { desc_.stencil.front.depth_fail_op = op; return *this; }
+    pipeline_desc& stencil_front_pass_op(sg_stencil_op op) { desc_.stencil.front.pass_op = op; return *this; }
+    pipeline_desc& stencil_back_compare(sg_compare_func cf) { desc_.stencil.back.compare = cf; return *this; }
+    pipeline_desc& stencil_back_fail_op(sg_stencil_op op) { desc_.stencil.back.fail_op = op; return *this; }
+    pipeline_desc& stencil_back_depth_fail_op(sg_stencil_op op) { desc_.stencil.back.depth_fail_op = op; return *this; }
+    pipeline_desc& stencil_back_pass_op(sg_stencil_op op) { desc_.stencil.back.pass_op = op; return *this; }
+    pipeline_desc& stencil_read_mask(uint8_t mask) { desc_.stencil.read_mask = mask; return *this; }
+    pipeline_desc& stencil_write_mask(uint8_t mask) { desc_.stencil.write_mask = mask; return *this; }
+    pipeline_desc& stencil_ref(uint8_t ref) { desc_.stencil.ref = ref; return *this; }
+
     // Vertex layout helpers
-    pipeline_desc& vertex_attr(int index, int buffer_index, int offset, sg_vertex_format format) {
+    pipeline_desc& layout_attr(int index, int buffer_index, int offset, sg_vertex_format format) {
         desc_.layout.attrs[index].buffer_index = buffer_index;
         desc_.layout.attrs[index].offset = offset;
         desc_.layout.attrs[index].format = format;
         return *this;
     }
-    
-    pipeline_desc& vertex_buffer_stride(int index, int stride) {
+
+    pipeline_desc& layout_buffer_stride(int index, int stride) {
         desc_.layout.buffers[index].stride = stride;
+        return *this;
+    }
+
+    pipeline_desc& layout_buffer_step_func(int index, sg_vertex_step step) {
+        desc_.layout.buffers[index].step_func = step;
+        return *this;
+    }
+
+    pipeline_desc& layout_buffer_step_rate(int index, int rate) {
+        desc_.layout.buffers[index].step_rate = rate;
+        return *this;
+    }
+
+    // Color target helpers
+    pipeline_desc& color_format(int index, sg_pixel_format fmt) {
+        desc_.colors[index].pixel_format = fmt;
+        return *this;
+    }
+
+    pipeline_desc& color_write_mask(int index, sg_color_mask mask) {
+        desc_.colors[index].write_mask = mask;
+        return *this;
+    }
+
+    pipeline_desc& color_blend_enabled(int index, bool v) {
+        desc_.colors[index].blend.enabled = v;
+        return *this;
+    }
+
+    pipeline_desc& color_blend_src_factor_rgb(int index, sg_blend_factor f) {
+        desc_.colors[index].blend.src_factor_rgb = f;
+        return *this;
+    }
+
+    pipeline_desc& color_blend_dst_factor_rgb(int index, sg_blend_factor f) {
+        desc_.colors[index].blend.dst_factor_rgb = f;
+        return *this;
+    }
+
+    pipeline_desc& color_blend_op_rgb(int index, sg_blend_op op) {
+        desc_.colors[index].blend.op_rgb = op;
+        return *this;
+    }
+
+    pipeline_desc& color_blend_src_factor_alpha(int index, sg_blend_factor f) {
+        desc_.colors[index].blend.src_factor_alpha = f;
+        return *this;
+    }
+
+    pipeline_desc& color_blend_dst_factor_alpha(int index, sg_blend_factor f) {
+        desc_.colors[index].blend.dst_factor_alpha = f;
+        return *this;
+    }
+
+    pipeline_desc& color_blend_op_alpha(int index, sg_blend_op op) {
+        desc_.colors[index].blend.op_alpha = op;
         return *this;
     }
 };
 
-// Wrapper for sg_sampler_desc
+// Builder API for sg_sampler_desc
 class sampler_desc : public helper::desc<sg_sampler_desc> {
 public:
     sampler_desc() = default;
@@ -386,110 +580,45 @@ public:
     sampler_desc& max_anisotropy(uint32_t ma) { desc_.max_anisotropy = ma; return *this; }
     sampler_desc& label(const char* l) { desc_.label = l; return *this; }
 
-    // Convenience constructors
-    static sampler_desc linear() {
+    // Convenience factory methods
+    static sampler_desc make_linear() {
         return sampler_desc()
             .min_filter(SG_FILTER_LINEAR)
-            .mag_filter(SG_FILTER_LINEAR)
-            .mipmap_filter(SG_FILTER_LINEAR)
-            .wrap_u(SG_WRAP_CLAMP_TO_EDGE)
-            .wrap_v(SG_WRAP_CLAMP_TO_EDGE)
-            .wrap_w(SG_WRAP_CLAMP_TO_EDGE);
+            .mag_filter(SG_FILTER_LINEAR);
     }
 
-    static sampler_desc nearest() {
+    static sampler_desc make_nearest() {
         return sampler_desc()
             .min_filter(SG_FILTER_NEAREST)
-            .mag_filter(SG_FILTER_NEAREST)
-            .mipmap_filter(SG_FILTER_NEAREST)
-            .wrap_u(SG_WRAP_CLAMP_TO_EDGE)
-            .wrap_v(SG_WRAP_CLAMP_TO_EDGE)
-            .wrap_w(SG_WRAP_CLAMP_TO_EDGE);
+            .mag_filter(SG_FILTER_NEAREST);
     }
 
-    static sampler_desc repeating() {
+    static sampler_desc make_linear_clamp() {
         return sampler_desc()
             .min_filter(SG_FILTER_LINEAR)
             .mag_filter(SG_FILTER_LINEAR)
-            .mipmap_filter(SG_FILTER_LINEAR)
-            .wrap_u(SG_WRAP_REPEAT)
-            .wrap_v(SG_WRAP_REPEAT)
-            .wrap_w(SG_WRAP_REPEAT);
+            .wrap_u(SG_WRAP_CLAMP_TO_EDGE)
+            .wrap_v(SG_WRAP_CLAMP_TO_EDGE);
     }
 };
 
-// Wrapper for sg_texture_view_range
-class texture_view_range : public helper::desc<sg_texture_view_range> {
+// Builder API for sg_desc (context descriptor)
+class context_desc : public helper::desc<sg_desc> {
 public:
-    texture_view_range() = default;
+    context_desc() = default;
 
-    texture_view_range& base(int b) { desc_.base = b; return *this; }
-    texture_view_range& count(int c) { desc_.count = c; return *this; }
-};
+    context_desc& buffer_pool_size(int size) { desc_.buffer_pool_size = size; return *this; }
+    context_desc& image_pool_size(int size) { desc_.image_pool_size = size; return *this; }
+    context_desc& sampler_pool_size(int size) { desc_.sampler_pool_size = size; return *this; }
+    context_desc& shader_pool_size(int size) { desc_.shader_pool_size = size; return *this; }
+    context_desc& pipeline_pool_size(int size) { desc_.pipeline_pool_size = size; return *this; }
+    context_desc& view_pool_size(int size) { desc_.view_pool_size = size; return *this; }
+    context_desc& uniform_buffer_size(int size) { desc_.uniform_buffer_size = size; return *this; }
+    context_desc& max_commit_listeners(int max) { desc_.max_commit_listeners = max; return *this; }
+    context_desc& disable_validation(bool disable) { desc_.disable_validation = disable; return *this; }
 
-// Wrapper for sg_buffer_view_desc
-class buffer_view_desc : public helper::desc<sg_buffer_view_desc> {
-public:
-    buffer_view_desc() = default;
-
-    buffer_view_desc& buffer(sg_buffer buf) { desc_.buffer = buf; return *this; }
-    buffer_view_desc& offset(int off) { desc_.offset = off; return *this; }
-};
-
-// Wrapper for sg_image_view_desc
-class image_view_desc : public helper::desc<sg_image_view_desc> {
-public:
-    image_view_desc() = default;
-
-    image_view_desc& image(sg_image img) { desc_.image = img; return *this; }
-    image_view_desc& mip_level(int level) { desc_.mip_level = level; return *this; }
-    image_view_desc& slice(int s) { desc_.slice = s; return *this; }
-};
-
-// Wrapper for sg_texture_view_desc
-class texture_view_desc : public helper::desc<sg_texture_view_desc> {
-public:
-    texture_view_desc() = default;
-
-    texture_view_desc& image(sg_image img) { desc_.image = img; return *this; }
-    texture_view_desc& mip_levels(const sg_texture_view_range& range) { desc_.mip_levels = range; return *this; }
-    texture_view_desc& slices(const sg_texture_view_range& range) { desc_.slices = range; return *this; }
-};
-
-// Wrapper for sg_view_desc
-class view_desc : public helper::desc<sg_view_desc> {
-public:
-    view_desc() = default;
-
-    view_desc& texture(const sg_texture_view_desc& t) { desc_.texture = t; return *this; }
-    view_desc& storage_buffer(const sg_buffer_view_desc& sb) { desc_.storage_buffer = sb; return *this; }
-    view_desc& storage_image(const sg_image_view_desc& si) { desc_.storage_image = si; return *this; }
-    view_desc& color_attachment(const sg_image_view_desc& ca) { desc_.color_attachment = ca; return *this; }
-    view_desc& resolve_attachment(const sg_image_view_desc& ra) { desc_.resolve_attachment = ra; return *this; }
-    view_desc& depth_stencil_attachment(const sg_image_view_desc& dsa) { desc_.depth_stencil_attachment = dsa; return *this; }
-    view_desc& label(const char* l) { desc_.label = l; return *this; }
-};
-
-// Wrapper for sg_desc (main sokol_gfx setup descriptor)
-class desc : public helper::desc<sg_desc> {
-public:
-    desc() = default;
-
-    desc& buffer_pool_size(int size) { desc_.buffer_pool_size = size; return *this; }
-    desc& image_pool_size(int size) { desc_.image_pool_size = size; return *this; }
-    desc& sampler_pool_size(int size) { desc_.sampler_pool_size = size; return *this; }
-    desc& shader_pool_size(int size) { desc_.shader_pool_size = size; return *this; }
-    desc& pipeline_pool_size(int size) { desc_.pipeline_pool_size = size; return *this; }
-    desc& view_pool_size(int size) { desc_.view_pool_size = size; return *this; }
-    desc& uniform_buffer_size(int size) { desc_.uniform_buffer_size = size; return *this; }
-    desc& max_commit_listeners(int max) { desc_.max_commit_listeners = max; return *this; }
-    desc& disable_validation(bool disable) { desc_.disable_validation = disable; return *this; }
-    desc& enforce_portable_limits(bool enforce) { desc_.enforce_portable_limits = enforce; return *this; }
-    desc& environment(const sg_environment& env) { desc_.environment = env; return *this; }
-
-    // Convenience constructor with reasonable defaults
-    static desc with_defaults() {
-        return desc()
+    static context_desc make_defaults() {
+        return context_desc()
             .buffer_pool_size(128)
             .image_pool_size(128)
             .sampler_pool_size(64)
@@ -498,7 +627,8 @@ public:
             .view_pool_size(16);
     }
 };
-}
+} // namespace sg
+
 
 namespace sapp {
     // Specific wrapper for sapp_desc with builder-style API
