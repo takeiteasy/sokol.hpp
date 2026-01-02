@@ -28,6 +28,7 @@
 #else
 #error Can't find sokol_gfx.h, please include sokol_gfx before including sokol.hpp
 #endif
+#endif
 
 #ifndef SOKOL_APP_INCLUDED
 #if __has_include("sokol_app.h")
