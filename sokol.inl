@@ -214,6 +214,11 @@ public:
         return *this;
     }
 
+    // Build the resource from this descriptor
+    sg_buffer build() const {
+        return sg_make_buffer(&desc_);
+    }
+
 };
 
 // Builder API for sg_image_desc
@@ -306,6 +311,11 @@ public:
         return *this;
     }
 
+    // Build the resource from this descriptor
+    sg_image build() const {
+        return sg_make_image(&desc_);
+    }
+
 };
 
 // Builder API for sg_sampler_desc
@@ -371,6 +381,11 @@ public:
     sampler_desc& label(const char* value) {
         desc_.label = value;
         return *this;
+    }
+
+    // Build the resource from this descriptor
+    sg_sampler build() const {
+        return sg_make_sampler(&desc_);
     }
 
 };
@@ -690,6 +705,11 @@ public:
         return *this;
     }
 
+    // Build the resource from this descriptor
+    sg_shader build() const {
+        return sg_make_shader(&desc_);
+    }
+
 };
 
 // Builder API for sg_pipeline_desc
@@ -932,6 +952,11 @@ public:
         return *this;
     }
 
+    // Build the resource from this descriptor
+    sg_pipeline build() const {
+        return sg_make_pipeline(&desc_);
+    }
+
 };
 
 // Builder API for sg_buffer_view_desc
@@ -1108,6 +1133,11 @@ public:
     view_desc& label(const char* value) {
         desc_.label = value;
         return *this;
+    }
+
+    // Build the resource from this descriptor
+    sg_view build() const {
+        return sg_make_view(&desc_);
     }
 
 };
